@@ -11,8 +11,6 @@ wheels/
 **/.venv
 
 # Environment variables
-.env
-.env.*
 !.env.example
 
 # Logs and generated reports
@@ -32,3 +30,5 @@ cli/.env
 # Root level test/cache artifacts
 /test_*.py
 /.pytest_cache/
+config.bat
+node_modules

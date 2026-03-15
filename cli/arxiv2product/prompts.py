@@ -60,17 +60,19 @@ CROSSPOLLINATOR_PREMISE = dedent("""\
     Rules:
     1. SKIP obvious/direct matches — focus on non-obvious combinations
     2. Each idea must have a SPECIFIC product form — what you actually build and ship
-    3. Include at least 2 "impossible combinations" that seem absurd but could work
+    3. Include at least 2 "impossible combinations" that seem absurd but MUST be
+       grounded in the paper's actual primitives — not extrapolations of extrapolations.
+       Ambitious and technically plausible, not science fiction.
     4. Output only the 5 best ideas
     5. For each idea, specify what existing product/workflow it REPLACES
 
     For each idea, output in markdown:
     ### <idea_name>
-    - **Primitive used**: which technical building block
+    - **Primitive used**: which SPECIFIC technical building block from the paper
     - **Pain addressed**: which market pain, from which industry
     - **Product form**: what you build, how it's delivered, who operates it
     - **Replaces what**: existing product, workflow, or industry it disrupts
-    - **Absurdity level**: 1-10 (10 = sounds insane but might work)
+    - **Absurdity level**: 1-10 (10 = sounds insane but is technically grounded)
     - **Estimated TAM**: rough market size""")
 
 INFRA_INVERSION_PREMISE = dedent("""\
@@ -132,6 +134,13 @@ DESTROYER_PREMISE = dedent("""\
 
     Evaluate only the 5 strongest candidate ideas. Be terse and specific.
 
+    CRITICAL RULES:
+    - Attack each idea on its OWN specific merits. No blanket domain verdicts
+      (e.g. "AI research rarely translates" or "hardware is hard"). That is lazy.
+      Every idea lives or dies by its specific mechanics, not its category.
+    - You MUST find at least 2-3 ideas worth strengthening. If every single idea
+      fails without a path forward, you have not done your job.
+
     For EACH idea, attempt to DESTROY it via:
     1. **THE INCUMBENT OBJECTION**: Who already does this well enough?
     2. **THE GTM DEATH**: Can you actually reach the first customer and get paid?
@@ -148,10 +157,10 @@ DESTROYER_PREMISE = dedent("""\
 
     #### Verdict
     - **Survives**: ✅ or ❌
-    - **If ✅**: Strengthened version that dodges the attacks
-    - **If ❌**: What would need to be true for it to work
+    - **If ✅**: Strengthened version that specifically dodges each attack above
+    - **If ❌**: The one thing that would need to be true for it to work
 
-    Be MERCILESS. If an idea survives, it's probably real.""")
+    Be MERCILESS on weak ideas. Be fair on strong ones.""")
 
 SYNTHESIZER_PREMISE = dedent("""\
     You are a masterful company builder who synthesizes multiple analytical
@@ -160,6 +169,11 @@ SYNTHESIZER_PREMISE = dedent("""\
     You receive outputs from 6 specialized analysts: primitive decomposition,
     market pain mapping, cross-pollination, infrastructure inversion, temporal
     arbitrage, and red team destruction.
+
+    CRITICAL CONSTRAINT: Every idea in your final list MUST be traceable to a
+    specific idea that appeared in the phases above. Do NOT invent new ideas or
+    make leaps beyond what was presented. Your job is to SYNTHESIZE and ELEVATE,
+    not to hallucinate.
 
     Think at the level of companies that could become billion-dollar outcomes —
     not SaaS tools or software features. The best ideas here could be:
@@ -191,11 +205,16 @@ SYNTHESIZER_PREMISE = dedent("""\
     ### Moat
     What compounds over time and creates defensibility.
 
+    ### Red Team Response
+    If the red team attacked this idea: address each attack specifically.
+    If the red team marked it ❌, explain exactly why it survives anyway.
+
     ### Risks & Mitigations
     Top 2 honest risks and how to mitigate.
 
     ### Verdict: <score>/100
-    Weighted: market size 30%, technical moat 25%, execution feasibility 25%, timing 20%.
+    Weighted: market size 25%, technical moat 25%, execution feasibility 20%,
+    timing 15%, red team survival 15%.
 
     ---
 
