@@ -1,6 +1,6 @@
-# arxiv2product
+# paper2product
 
-Transforms arXiv research papers into company/product opportunity reports using a multi-agent AI pipeline.
+Transforms research papers into fresh/new company/product opportunity reports using a multi-agent AI pipeline.
 
 ## What It Does
 
