@@ -1,14 +1,14 @@
 [project]
-name = "arxiv2product"
+name = "paper2product"
 version = "0.1.0"
-description = "Generate product ideas from arXiv papers with a multi-agent pipeline."
+description = "Transform research papers into company/product opportunity reports with a multi-agent adversarial pipeline."
 readme = "README.md"
 requires-python = ">=3.13"
 authors = [
     { name = "Ash-Blanc", email = "angelash18092007@gmail.com" }
 ]
 license = { text = "MIT" }
-keywords = ["arxiv", "ai", "agents", "startup", "product", "research"]
+keywords = ["arxiv", "ai", "agents", "startup", "product", "research", "apodex", "deep-research", "doi", "biorxiv"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -32,14 +32,14 @@ dependencies = [
 ]
 
 [project.scripts]
-arxiv2product = "arxiv2product.cli:main"
+paper2product = "paper2product.cli:main"
 
 [project.urls]
-Repository = "https://github.com/Ash-Blanc/arxiv2product"
-Issues = "https://github.com/Ash-Blanc/arxiv2product/issues"
+Repository = "https://github.com/Ash-Blanc/paper2product"
+Issues = "https://github.com/Ash-Blanc/paper2product/issues"
 
 [tool.uv]
 package = true
 
 [tool.setuptools]
-packages = ["arxiv2product"]
+packages = ["paper2product"]

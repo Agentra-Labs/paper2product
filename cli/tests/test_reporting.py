@@ -1,13 +1,14 @@
 import unittest
 
-from arxiv2product.models import PaperContent
-from arxiv2product.reporting import build_report
+from paper2product.models import PaperContent
+from paper2product.reporting import build_report
 
 
 class ReportingTests(unittest.TestCase):
     def test_build_report_includes_supporting_sources_sections(self):
         paper = PaperContent(
-            arxiv_id="2603.09229",
+            paper_id="2603.09229",
+            source="arxiv",
             title="Example Paper",
             authors=["Alice", "Bob"],
             abstract="Abstract",

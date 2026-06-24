@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from arxiv2product.feedback import heuristic_feedback_score
-from arxiv2product.service_store import ServiceStore
+from paper2product.feedback import heuristic_feedback_score
+from paper2product.service_store import ServiceStore
 
 
 class ServiceStoreTests(unittest.TestCase):

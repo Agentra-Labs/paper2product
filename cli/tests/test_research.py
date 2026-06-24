@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from arxiv2product.research import (
+from paper2product.research import (
     SearchResponse,
     SearchResult,
     SearchTrace,

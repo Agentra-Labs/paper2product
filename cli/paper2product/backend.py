@@ -11,14 +11,21 @@ from .errors import AgentExecutionError
 
 OPENAI_COMPATIBLE_BACKEND = "openai_compatible"
 AGENTICA_BACKEND = "agentica"
+APODEX_BACKEND = "apodex"
 DEFAULT_OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_DIRECT_TIMEOUT_SECONDS = 240.0
+
+VALID_BACKENDS = {OPENAI_COMPATIBLE_BACKEND, AGENTICA_BACKEND, APODEX_BACKEND}
 
 
 def get_execution_backend_name() -> str:
     configured = os.getenv("EXECUTION_BACKEND", "").strip().lower()
-    if configured in {OPENAI_COMPATIBLE_BACKEND, AGENTICA_BACKEND}:
+    if configured in VALID_BACKENDS:
         return configured
+    # Auto-detect: Apodex key takes priority if explicitly set,
+    # then fall back to OpenAI/OpenRouter, then Agentica
+    if os.getenv("APODEX_API_KEY"):
+        return APODEX_BACKEND
     if os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY"):
         return OPENAI_COMPATIBLE_BACKEND
     return AGENTICA_BACKEND
@@ -79,7 +86,7 @@ def _provider_slug_hint(base_url: str, model: str) -> str:
         return (
             " The configured provider may not accept OpenRouter-style model slugs "
             f"like '{model}'. Try a provider-native model name via the CLI argument "
-            "or ARXIV2PRODUCT_MODEL in .env."
+            "or PAPER2PRODUCT_MODEL in .env."
         )
     return ""
 
@@ -129,8 +136,8 @@ class OpenAICompatibleBackend:
             "Content-Type": "application/json",
         }
         if "openrouter.ai" in self.base_url:
-            headers["HTTP-Referer"] = "https://github.com/Ash-Blanc/arxiv2product"
-            headers["X-Title"] = "arxiv2product"
+            headers["HTTP-Referer"] = "https://github.com/Ash-Blanc/paper2product"
+            headers["X-Title"] = "paper2product"
 
         payload: dict[str, Any] = {
             "model": normalize_model_name(model),

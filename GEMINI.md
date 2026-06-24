@@ -1,7 +1,7 @@
 # GEMINI.md
 
 ## Project Overview
-**arxiv2product** is a multi-agent AI pipeline designed to transform arXiv research papers into comprehensive company and product opportunity reports. It employs a sophisticated, 5-phase adversarial process to analyze technical primitives and map them to market needs, infrastructure gaps, and temporal opportunities.
+**paper2product** is a multi-agent AI pipeline designed to transform arXiv research papers into comprehensive company and product opportunity reports. It employs a sophisticated, 5-phase adversarial process to analyze technical primitives and map them to market needs, infrastructure gaps, and temporal opportunities.
 
 ### Core Architecture (5-Phase Pipeline)
 1.  **Decomposer:** Extracts atomic technical primitives and building blocks from the paper.
@@ -31,12 +31,12 @@ cp .env.example .env # Configure your API keys (AGENTICA_API_KEY, etc.)
 ```
 
 ### CLI Commands
-- **Generate Report:** `uv run arxiv2product analyze <arxiv_id_or_url>`
-- **Display Report:** `uv run arxiv2product analyze <id> --display` (Uses `glow` if installed, falls back to `rich`)
-- **Topic Discovery:** `uv run arxiv2product analyze "research topic" --search-papers`
-- **Competitor Intelligence:** `uv run arxiv2product compete <report_path>.md`
-- **Start API Service:** `uv run arxiv2product serve` (Default port: 8010)
-- **Interactive Setup:** `uv run arxiv2product init` (Configure API keys interactively)
+- **Generate Report:** `uv run paper2product analyze <arxiv_id_or_url>`
+- **Display Report:** `uv run paper2product analyze <id> --display` (Uses `glow` if installed, falls back to `rich`)
+- **Topic Discovery:** `uv run paper2product analyze "research topic" --search-papers`
+- **Competitor Intelligence:** `uv run paper2product compete <report_path>.md`
+- **Start API Service:** `uv run paper2product serve` (Default port: 8010)
+- **Interactive Setup:** `uv run paper2product init` (Configure API keys interactively)
 
 ### Testing
 Run the test suite using `unittest`:
@@ -56,7 +56,7 @@ uv run python -m unittest discover -s tests
 - **Orchestration:** Use `asyncio` for all agentic and network-bound orchestration.
 
 ### Directory Structure
-- `cli/arxiv2product/`: Core package logic.
+- `cli/paper2product/`: Core package logic.
 - `cli/tests/`: Unit and integration tests.
 - `cli/main.py`: Main CLI entry point wrapper.
 - `cli/agentica-docs.md`: Reference for the Agentica framework used in this project.
@@ -70,7 +70,7 @@ uv run python -m unittest discover -s tests
 - **Advanced Code Skimming**: Deepen the GitHub integration to perform automated AST-based analysis of repository sections during the Decomposer phase.
 
 ### Agent Configuration
-- **Prompts:** Centralized in `cli/arxiv2product/prompts.py` as `UPPER_SNAKE_CASE` constants.
+- **Prompts:** Centralized in `cli/paper2product/prompts.py` as `UPPER_SNAKE_CASE` constants.
 - **Execution:** Uses the `spawn` + `agent.call` pattern from `agentica`.
 - **Backends:** Supports both `agentica` and `openai_compatible` (e.g., OpenRouter) via `backend.py`.
 

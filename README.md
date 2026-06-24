@@ -21,10 +21,10 @@ Output: A ranked list of 4-6 company ideas with market analysis, moats, and firs
 ```bash
 cd cli
 uv sync
-uv run arxiv2product init   # interactive setup for API keys
+uv run paper2product init   # interactive setup for API keys
 ```
 
-The `init` command will prompt you for required keys and save them to `~/.arxiv2product/.env`.
+The `init` command will prompt you for required keys and save them to `~/.paper2product/.env`.
 
 **Required keys:**
 - `AGENTICA_API_KEY` (default backend) — or use OpenRouter with `OPENROUTER_API_KEY`
@@ -40,13 +40,13 @@ The `init` command will prompt you for required keys and save them to `~/.arxiv2
 cd cli
 
 # From an arXiv ID
-uv run arxiv2product analyze 2603.09229
+uv run paper2product analyze 2603.09229
 
 # Render in terminal (Uses glow if available, falls back to Rich)
-uv run arxiv2product analyze 2603.09229 --display
+uv run paper2product analyze 2603.09229 --display
 
 # Automatically open the report when finished
-uv run arxiv2product analyze 2603.09229 --open
+uv run paper2product analyze 2603.09229 --open
 ```
 
 Output: `products_2603_09229.md` — a markdown report with ranked company ideas.
@@ -57,7 +57,7 @@ Output: `products_2603_09229.md` — a markdown report with ranked company ideas
 
 ```bash
 # Enable topic discovery in .env or via environment variable
-ENABLE_PAPER_SEARCH=1 uv run arxiv2product analyze "self-adapting language models" --search-papers
+ENABLE_PAPER_SEARCH=1 uv run paper2product analyze "self-adapting language models" --search-papers
 ```
 
 The pipeline will:
@@ -71,10 +71,10 @@ The pipeline will:
 
 ```bash
 # Validate your idea against a specific paper
-uv run arxiv2product analyze 2603.09229 --idea "A developer tool that automates PR reviews"
+uv run paper2product analyze 2603.09229 --idea "A developer tool that automates PR reviews"
 
 # Have the pipeline find the top 5 relevant papers to validate your idea
-uv run arxiv2product analyze --idea "A startup building AI-designed metamaterials" --search-papers
+uv run paper2product analyze --idea "A startup building AI-designed metamaterials" --search-papers
 ```
 
 When you provide an `--idea`, the pipeline's agents (Cross-pollinator, Infrastructure Inversion, Temporal Arbitrage, and Destroyer) will anchor their analysis entirely on your concept—acting as a technical simulation lab to build out the architecture and find its mechanical failure points.
@@ -87,13 +87,13 @@ When you provide an `--idea`, the pipeline's agents (Cross-pollinator, Infrastru
 
 ```bash
 # After generating a report, analyze its top ideas
-uv run arxiv2product compete products_2603_09229.md
+uv run paper2product compete products_2603_09229.md
 
 # Analyze only specific ideas by rank
-uv run arxiv2product compete products_2603_09229.md --ideas 1,2
+uv run paper2product compete products_2603_09229.md --ideas 1,2
 
 # Analyze a specific idea by name
-uv run arxiv2product compete products_2603_09229.md --idea "ModelGuard"
+uv run paper2product compete products_2603_09229.md --idea "ModelGuard"
 ```
 
 **Required keys:**
@@ -108,7 +108,7 @@ Run as a local FastAPI service:
 
 ```bash
 cd cli
-uv run arxiv2product serve
+uv run paper2product serve
 # Runs on http://127.0.0.1:8010
 ```
 
@@ -130,9 +130,9 @@ The CLI looks for `.env` in this order:
 1. Current working directory: `./.env`
 2. `./cli/.env`
 3. Project root (parent of cli): `../.env`
-4. `~/.arxiv2product/.env` (recommended for uv tool installations)
+4. `~/.paper2product/.env` (recommended for uv tool installations)
 
-Use `uv run arxiv2product init` to easily configure your environment.
+Use `uv run paper2product init` to easily configure your environment.
 
 ---
 
@@ -156,7 +156,7 @@ uv run python -m unittest discover -s tests
 │   ├── pyproject.toml     # Package definition (cli2 + rich)
 │   ├── agentica-docs.md   # Agentica framework reference
 │   ├── main.py            # CLI entry point wrapper
-│   ├── arxiv2product/     # Package source
+│   ├── paper2product/     # Package source
 │   │   ├── cli.py         # Unified CLI (analyze, compete, serve, init)
 │   │   ├── pipeline.py    # Core 5-phase pipeline (Rich output)
 │   │   ├── prompts.py     # Agent premises/prompts
@@ -172,11 +172,11 @@ uv run python -m unittest discover -s tests
 
 | Goal | Command | Notes |
 |------|---------|-------|
-| Setup environment | `arxiv2product init` | Interactive API key config |
-| Analyze a specific paper | `arxiv2product analyze 2603.09229` | Standard 5-phase pipeline |
-| Explore a research area | `arxiv2product analyze "topic" --search-papers` | Finds best paper, then analyzes |
-| Deep-dive on an idea | `arxiv2product compete report.md` | Post-pipeline competitive intel |
-| Run as a service | `arxiv2product serve` | FastAPI on port 8010 |
+| Setup environment | `paper2product init` | Interactive API key config |
+| Analyze a specific paper | `paper2product analyze 2603.09229` | Standard 5-phase pipeline |
+| Explore a research area | `paper2product analyze "topic" --search-papers` | Finds best paper, then analyzes |
+| Deep-dive on an idea | `paper2product compete report.md` | Post-pipeline competitive intel |
+| Run as a service | `paper2product serve` | FastAPI on port 8010 |
 
 ---
 

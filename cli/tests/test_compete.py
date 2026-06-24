@@ -3,8 +3,8 @@ import os
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from arxiv2product.compete import IdeaContext, parse_ideas
-from arxiv2product.compete_tools import make_parallel_search_tool, make_tinyfish_browse_tool
+from paper2product.compete import IdeaContext, parse_ideas
+from paper2product.compete_tools import make_parallel_search_tool, make_tinyfish_browse_tool
 
 
 SAMPLE_REPORT = """\
@@ -88,7 +88,7 @@ class ParallelSearchToolTests(unittest.TestCase):
         async def run_test():
             tool = make_parallel_search_tool(max_calls=1)
             with patch(
-                "arxiv2product.compete_tools._parallel_search",
+                "paper2product.compete_tools._parallel_search",
                 new_callable=AsyncMock,
                 return_value="[parallel_search results=3] ...",
             ):
@@ -115,7 +115,7 @@ class TinyfishBrowseToolTests(unittest.TestCase):
         async def run_test():
             tool = make_tinyfish_browse_tool(max_calls=1)
             with patch(
-                "arxiv2product.compete_tools._tinyfish_browse",
+                "paper2product.compete_tools._tinyfish_browse",
                 new_callable=AsyncMock,
                 return_value="[tinyfish_browse] data",
             ):

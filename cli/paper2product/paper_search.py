@@ -16,6 +16,7 @@ import httpx
 
 from .backend import (
     AGENTICA_BACKEND,
+    APODEX_BACKEND,
     OPENAI_COMPATIBLE_BACKEND,
     OpenAICompatibleBackend,
     build_openai_compatible_backend,
@@ -28,6 +29,7 @@ from .prompts import (
     PAPER_SELECTOR_PREMISE,
 )
 from .research import SearchTrace, make_web_search_tool
+from .sources import fetch_paper
 
 ARXIV_ID_PATTERN = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$")
 ARXIV_URL_PATTERN = re.compile(
@@ -294,6 +296,35 @@ async def _enrich_candidates(crawler_output: str) -> str:
     return "\n\n".join(lines)
 
 
+async def _run_paper_search_apodex(topic: str) -> list[PaperSearchResult]:
+    """Run paper search using Apodex deep research backend.
+
+    Apodex has built-in web search, so we ask it directly to find and rank papers.
+    We also do our own arXiv + Semantic Scholar search and feed those as candidates.
+    """
+    from .apodex import build_apodex_backend, get_apodex_phase_model
+    from .pipeline import call_apodex_text
+
+    backend = build_apodex_backend()
+
+    # Gather candidates from our own APIs
+    search_results = await _combined_paper_search(topic)
+
+    selector_output = await call_apodex_text(
+        backend,
+        system_prompt=PAPER_SELECTOR_PREMISE,
+        user_prompt=(
+            f"Topic: {topic}\n\n"
+            f"Candidate papers from arXiv and Semantic Scholar:\n{search_results}\n\n"
+            "Score and rank these papers. Search the web to find any additional "
+            "recent papers with GitHub code that we may have missed. "
+            "Return the top 3-5 as a JSON array."
+        ),
+        phase="paper search: selection",
+    )
+    return _parse_selector_output(selector_output)
+
+
 async def run_paper_search(
     topic: str,
     model: str = DEFAULT_MODEL,
@@ -303,7 +334,9 @@ async def run_paper_search(
     console.print(f"🔍 Paper search: discovering papers for topic: {topic}")
 
     backend_name = get_execution_backend_name()
-    if backend_name == OPENAI_COMPATIBLE_BACKEND:
+    if backend_name == APODEX_BACKEND:
+        results = await _run_paper_search_apodex(topic)
+    elif backend_name == OPENAI_COMPATIBLE_BACKEND:
         backend = build_openai_compatible_backend()
         results = await _run_paper_search_direct(topic, model, backend)
     else:

@@ -1,10 +1,10 @@
 # Repository Guidelines
 
 ## Project Overview
-**arxiv2product** is a multi-agent pipeline that transforms arXiv research papers into company/product opportunity reports. Python >= 3.13, managed with `uv`.
+**paper2product** is a multi-agent pipeline that transforms arXiv research papers into company/product opportunity reports. Python >= 3.13, managed with `uv`.
 
 ## Project Structure
-- `cli/` — All code lives here. Package source at `cli/arxiv2product/`, tests at `cli/tests/`.
+- `cli/` — All code lives here. Package source at `cli/paper2product/`, tests at `cli/tests/`.
 - `cli/main.py` — Thin CLI entry-point wrapper.
 - `cli/pyproject.toml` — Package metadata and dependencies (no lint/typecheck config).
 - `cli/agentica-docs.md` — Agentica framework reference.
@@ -17,12 +17,12 @@ All commands run from the `cli/` directory.
 
 ```bash
 uv sync                                                   # install/update dependencies
-uv run arxiv2product analyze 2603.09229                    # generate report from arXiv ID
-uv run arxiv2product analyze "topic" --search-papers       # topic discovery (needs ENABLE_PAPER_SEARCH=1)
-uv run arxiv2product analyze --idea "startup idea" --search-papers  # idea-driven paper search
-uv run arxiv2product serve                                 # start FastAPI service on port 8010
-uv run arxiv2product-compete report.md --ideas 1,2         # competitor intel on report ideas
-uv run arxiv2product init                                  # interactive API key setup
+uv run paper2product analyze 2603.09229                    # generate report from arXiv ID
+uv run paper2product analyze "topic" --search-papers       # topic discovery (needs ENABLE_PAPER_SEARCH=1)
+uv run paper2product analyze --idea "startup idea" --search-papers  # idea-driven paper search
+uv run paper2product serve                                 # start FastAPI service on port 8010
+uv run paper2product-compete report.md --ideas 1,2         # competitor intel on report ideas
+uv run paper2product init                                  # interactive API key setup
 
 # Testing
 uv run python -m unittest discover -s tests                        # run full test suite
@@ -83,7 +83,7 @@ Model names must be valid OpenRouter slugs (e.g., `anthropic/claude-sonnet-4`).
 - Tests use Python's built-in `unittest` framework with `unittest.IsolatedAsyncioTestCase` for async tests.
 - Use `unittest.mock.patch` / `patch.dict` for environment and network mocking.
 - Tests should **not** make real network or API calls; mock external services.
-- Each test file covers one feature area and imports from `arxiv2product.*` directly.
+- Each test file covers one feature area and imports from `paper2product.*` directly.
 
 ## Commit & PR Guidelines
 - Short imperative commit subjects (e.g., "add quality review pipeline", "fix timeout handling").

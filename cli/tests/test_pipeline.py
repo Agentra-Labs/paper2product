@@ -3,9 +3,9 @@ import os
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from arxiv2product.errors import AgentExecutionError
-from arxiv2product.models import PaperContent
-from arxiv2product.pipeline import (
+from paper2product.errors import AgentExecutionError
+from paper2product.models import PaperContent
+from paper2product.pipeline import (
     build_compact_paper_context,
     build_full_paper_context,
     gather_agent_calls,
@@ -16,7 +16,8 @@ from arxiv2product.pipeline import (
 class PipelineAsyncTests(unittest.IsolatedAsyncioTestCase):
     def test_compact_context_is_smaller_than_full_context(self):
         paper = PaperContent(
-            arxiv_id="2603.09229",
+            paper_id="2603.09229",
+            source="arxiv",
             title="Example",
             authors=["Alice", "Bob"],
             abstract="Abstract",
@@ -71,18 +72,18 @@ class PipelineAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_pipeline_prefers_direct_backend_when_direct_key_exists(self):
         with (
             patch.dict(os.environ, {"OPENROUTER_API_KEY": "key"}, clear=True),
-            patch("arxiv2product.pipeline.build_openai_compatible_backend", return_value="backend"),
+            patch("paper2product.pipeline.build_openai_compatible_backend", return_value="backend"),
             patch(
-                "arxiv2product.pipeline._run_pipeline_with_openai_compatible",
+                "paper2product.pipeline._run_pipeline_with_openai_compatible",
                 new_callable=AsyncMock,
                 return_value="products_2603_09229.md",
             ) as run_direct,
             patch(
-                "arxiv2product.pipeline._run_pipeline_with_agentica",
+                "paper2product.pipeline._run_pipeline_with_agentica",
                 new_callable=AsyncMock,
             ) as run_agentica,
         ):
-            from arxiv2product.pipeline import run_pipeline
+            from paper2product.pipeline import run_pipeline
 
             output = await run_pipeline("2603.09229")
 

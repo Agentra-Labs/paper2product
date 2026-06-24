@@ -4,14 +4,14 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 
-from arxiv2product.backend import (
+from paper2product.backend import (
     AGENTICA_BACKEND,
     OPENAI_COMPATIBLE_BACKEND,
     OpenAICompatibleBackend,
     get_execution_backend_name,
     normalize_model_name,
 )
-from arxiv2product.errors import AgentExecutionError
+from paper2product.errors import AgentExecutionError
 
 
 class BackendSelectionTests(unittest.TestCase):

@@ -1,8 +1,11 @@
+import json
 import asyncio
 import os
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Awaitable, Optional
+from typing import Any, Awaitable, Optional
 
 import httpx
 from agentica import spawn
@@ -10,13 +13,15 @@ from agentica.logging import set_default_agent_listener
 
 from .backend import (
     AGENTICA_BACKEND,
+    APODEX_BACKEND,
     OPENAI_COMPATIBLE_BACKEND,
     OpenAICompatibleBackend,
     build_openai_compatible_backend,
     get_execution_backend_name,
 )
+from .apodex import ApodexBackend, build_apodex_backend, get_apodex_phase_model
 from .errors import AgentExecutionError, AgenticaConnectionError
-from .ingestion import fetch_paper
+from .sources import fetch_paper, detect_source
 from .models import PaperContent
 from .prompts import (
     CROSSPOLLINATOR_PREMISE,
@@ -25,6 +30,8 @@ from .prompts import (
     DESTROYER_PREMISE,
     INFRA_INVERSION_PREMISE,
     PAIN_SCANNER_PREMISE,
+    PIPELINE_CRITIC_PREMISE,
+    PIPELINE_REPAIR_PREMISE,
     QUERY_PLANNER_PREMISE,
     SYNTHESIZER_PREMISE,
     TEMPORAL_PREMISE,
@@ -60,6 +67,9 @@ PRIMITIVE_SUMMARY_CHARS = 4_500
 PAIN_SUMMARY_CHARS = 3_000
 IDEA_SUMMARY_CHARS = 2_500
 QUERY_MAX_TOKENS = 120
+LEARNING_DIGEST_LIMIT = 6
+QUALITY_REPAIR_THRESHOLD = 70
+QUALITY_REPAIR_MAX_ATTEMPTS = 1
 PHASE_MAX_TOKENS = {
     "technical primitive extraction": 2200,
     "pain scanner": 1600,
@@ -101,10 +111,260 @@ def _agent_logs_enabled() -> bool:
 from rich.console import Console
 console = Console()
 
+
+@dataclass(slots=True)
+class QualityReview:
+    novelty_score: int
+    usefulness_score: int
+    evidence_score: int
+    duplication_risk: int
+    needs_revision: bool
+    issues: list[str]
+    repair_instructions: list[str]
+    rationale: str
+
+    def as_markdown(self) -> str:
+        status = "Needs revision" if self.needs_revision else "Accepted"
+        lines = [
+            f"- **Status**: {status}",
+            f"- **Novelty**: {self.novelty_score}/100",
+            f"- **Usefulness**: {self.usefulness_score}/100",
+            f"- **Evidence**: {self.evidence_score}/100",
+            f"- **Duplication risk**: {self.duplication_risk}/100",
+            f"- **Rationale**: {self.rationale}",
+        ]
+        if self.issues:
+            lines.append("- **Issues**:")
+            lines.extend(f"  - {issue}" for issue in self.issues)
+        if self.repair_instructions:
+            lines.append("- **Repair instructions**:")
+            lines.extend(f"  - {instruction}" for instruction in self.repair_instructions)
+        return "\n".join(lines)
+
 def _truncate_text(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "\n\n[...truncated...]"
+
+
+def _extract_json_blob(text: str) -> str:
+    stripped = text.strip()
+    if "```" in stripped:
+        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+    start_candidates = [idx for idx in (stripped.find("{"), stripped.find("[")) if idx != -1]
+    if not start_candidates:
+        return stripped
+    start = min(start_candidates)
+    end = max(stripped.rfind("}"), stripped.rfind("]"))
+    if end < start:
+        return stripped
+    return stripped[start : end + 1].strip()
+
+
+def _parse_quality_review(text: str) -> QualityReview:
+    payload: dict[str, Any] = {}
+    try:
+        parsed = json.loads(_extract_json_blob(text))
+        if isinstance(parsed, dict):
+            payload = parsed
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = {}
+
+    def read_int(key: str, fallback: int) -> int:
+        raw = payload.get(key, fallback)
+        if isinstance(raw, bool):
+            return fallback
+        if isinstance(raw, (int, float)):
+            return max(0, min(100, int(raw)))
+        return fallback
+
+    def read_list(key: str) -> list[str]:
+        raw = payload.get(key, [])
+        if not isinstance(raw, list):
+            return []
+        values: list[str] = []
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                values.append(item.strip())
+        return values[:5]
+
+    rationale = payload.get("rationale", "")
+    if not isinstance(rationale, str):
+        rationale = ""
+    return QualityReview(
+        novelty_score=read_int("novelty_score", 75),
+        usefulness_score=read_int("usefulness_score", 75),
+        evidence_score=read_int("evidence_score", 75),
+        duplication_risk=read_int("duplication_risk", 35),
+        needs_revision=bool(payload.get("needs_revision", False)),
+        issues=read_list("issues"),
+        repair_instructions=read_list("repair_instructions"),
+        rationale=rationale.strip() or "No structured quality review was available.",
+    )
+
+
+def _load_learning_digest() -> str:
+    db_path_value = os.getenv("PAPER2PRODUCT_SERVICE_DB", "data/service.db").strip()
+    if not db_path_value:
+        return ""
+
+    db_path = Path(db_path_value)
+    if not db_path.exists():
+        return ""
+
+    try:
+        from .service_store import ServiceStore
+
+        return ServiceStore(db_path).get_learning_digest(limit=LEARNING_DIGEST_LIMIT)
+    except Exception:
+        return ""
+
+
+def _learning_context_block(learning_digest: str) -> str:
+    if not learning_digest:
+        return ""
+    return (
+        "\n\nPERSISTED LEARNING DIGEST:\n"
+        f"{learning_digest}\n\n"
+        "Use this to avoid repeating stale patterns and to sharpen novelty."
+    )
+
+
+def _quality_review_prompt_context(
+    *,
+    final_raw: str,
+    learning_digest: str,
+    redteam_raw: str,
+    crosspoll_raw: str,
+    pain_raw: str,
+    temporal_raw: str,
+    infra_raw: str,
+    primitives_summary: str,
+) -> str:
+    return (
+        f"Final report draft:\n{final_raw}\n\n"
+        f"Learning digest:\n{learning_digest or '[none]'}\n\n"
+        f"Recent synthesis signals:\n{_truncate_text(crosspoll_raw, IDEA_SUMMARY_CHARS)}\n\n"
+        f"Market analysis:\n{_truncate_text(pain_raw, PAIN_SUMMARY_CHARS)}\n\n"
+        f"Infrastructure inversion:\n{_truncate_text(infra_raw, IDEA_SUMMARY_CHARS)}\n\n"
+        f"Temporal analysis:\n{_truncate_text(temporal_raw, IDEA_SUMMARY_CHARS)}\n\n"
+        f"Red team notes:\n{_truncate_text(redteam_raw, IDEA_SUMMARY_CHARS)}\n\n"
+        f"Primitives:\n{primitives_summary}"
+    )
+
+
+async def _quality_review_and_repair(
+    *,
+    use_agentica: bool,
+    backend: OpenAICompatibleBackend | None,
+    model: str,
+    final_raw: str,
+    learning_digest: str,
+    primitives_summary: str,
+    pain_raw: str,
+    crosspoll_raw: str,
+    infra_raw: str,
+    temporal_raw: str,
+    redteam_raw: str,
+    apodex_backend: ApodexBackend | None = None,
+) -> tuple[str, str, QualityReview]:
+    review_prompt = _quality_review_prompt_context(
+        final_raw=final_raw,
+        learning_digest=learning_digest,
+        redteam_raw=redteam_raw,
+        crosspoll_raw=crosspoll_raw,
+        pain_raw=pain_raw,
+        temporal_raw=temporal_raw,
+        infra_raw=infra_raw,
+        primitives_summary=primitives_summary,
+    )
+
+    async def critique(prompt_context: str) -> str:
+        if use_agentica:
+            critic_agent = await spawn_agent(
+                premise=PIPELINE_CRITIC_PREMISE,
+                model=model,
+            )
+            return await call_agent_text(
+                critic_agent,
+                prompt_context,
+                phase="quality review",
+            )
+        if apodex_backend is not None:
+            return await call_apodex_text(
+                apodex_backend,
+                system_prompt=PIPELINE_CRITIC_PREMISE,
+                user_prompt=prompt_context,
+                phase="quality review",
+            )
+        if backend is None:
+            raise AgentExecutionError("Quality review requires a direct backend.")
+        return await call_direct_text(
+            backend,
+            system_prompt=PIPELINE_CRITIC_PREMISE,
+            user_prompt=prompt_context,
+            phase="quality review",
+            model=model,
+            max_tokens=900,
+        )
+
+    async def repair(prompt_context: str, critique_raw: str) -> str:
+        if use_agentica:
+            repair_agent = await spawn_agent(
+                premise=PIPELINE_REPAIR_PREMISE,
+                model=model,
+            )
+            return await call_agent_text(
+                repair_agent,
+                f"{prompt_context}\n\nQUALITY REVIEW:\n{critique_raw}",
+                phase="quality repair",
+            )
+        if apodex_backend is not None:
+            return await call_apodex_text(
+                apodex_backend,
+                system_prompt=PIPELINE_REPAIR_PREMISE,
+                user_prompt=f"{prompt_context}\n\nQUALITY REVIEW:\n{critique_raw}",
+                phase="quality repair",
+            )
+        if backend is None:
+            raise AgentExecutionError("Quality repair requires a direct backend.")
+        return await call_direct_text(
+            backend,
+            system_prompt=PIPELINE_REPAIR_PREMISE,
+            user_prompt=f"{prompt_context}\n\nQUALITY REVIEW:\n{critique_raw}",
+            phase="quality repair",
+            model=model,
+            max_tokens=_phase_max_tokens("final synthesis"),
+        )
+
+    critique_raw = await critique(review_prompt)
+    review = _parse_quality_review(critique_raw)
+    repaired_raw = final_raw
+    for _ in range(QUALITY_REPAIR_MAX_ATTEMPTS):
+        if not review.needs_revision and min(
+            review.novelty_score,
+            review.usefulness_score,
+            review.evidence_score,
+        ) >= QUALITY_REPAIR_THRESHOLD:
+            break
+        repaired_raw = await repair(review_prompt, critique_raw)
+        critique_raw = await critique(
+            _quality_review_prompt_context(
+                final_raw=repaired_raw,
+                learning_digest=learning_digest,
+                redteam_raw=redteam_raw,
+                crosspoll_raw=crosspoll_raw,
+                pain_raw=pain_raw,
+                temporal_raw=temporal_raw,
+                infra_raw=infra_raw,
+                primitives_summary=primitives_summary,
+            )
+        )
+        review = _parse_quality_review(critique_raw)
+
+    return repaired_raw, review.as_markdown(), review
 
 
 def _phase_started(label: str) -> float:
@@ -208,6 +468,31 @@ async def call_direct_text(
                 user_prompt=user_prompt,
                 model=model,
                 phase=phase,
+                max_tokens=max_tokens,
+            ),
+            timeout=_get_phase_timeout_seconds(),
+        )
+    except BaseException as exc:
+        raise AgentExecutionError(_format_direct_error(phase, exc)) from exc
+
+
+async def call_apodex_text(
+    backend: ApodexBackend,
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    phase: str,
+    model: str | None = None,
+    max_tokens: int | None = None,
+) -> str:
+    """Call the Apodex deep research backend. Model tier is auto-selected per phase."""
+    try:
+        return await asyncio.wait_for(
+            backend.generate_text(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                phase=phase,
+                model=model,
                 max_tokens=max_tokens,
             ),
             timeout=_get_phase_timeout_seconds(),
@@ -385,7 +670,7 @@ def build_compact_paper_context(
 
 
 async def _run_pipeline_with_agentica(
-    arxiv_ids: list[str], model: str = DEFAULT_MODEL, user_idea: str = "", github_mapping: dict[str, str] | None = None
+    paper_refs: list[str], model: str = DEFAULT_MODEL, user_idea: str = "", github_mapping: dict[str, str] | None = None
 ) -> str:
     """Run the pipeline using Agentica as the execution backend."""
     if not _agent_logs_enabled():
@@ -393,13 +678,15 @@ async def _run_pipeline_with_agentica(
     speed_profile = _get_speed_profile()
     github_mapping = github_mapping or {}
     
-    console.print(f"📄 Fetching {len(arxiv_ids)} paper(s): {', '.join(arxiv_ids)}")
-    papers = await asyncio.gather(*(fetch_paper(aid, github_mapping.get(aid, "")) for aid in arxiv_ids))
+    console.print(f"📄 Fetching {len(paper_refs)} paper(s): {', '.join(paper_refs)}")
+    papers = await asyncio.gather(*(fetch_paper(aid, github_mapping.get(ref, "")) for ref in paper_refs))
     titles = [p.title for p in papers]
     console.print(f"✅ Loaded: {titles}")
     console.print(f"⚙️ Speed profile: {speed_profile}")
+    learning_digest = _load_learning_digest()
 
     anchor_text = f"\n\nUSER'S CORE IDEA TO VALIDATE/AUGMENT:\n{user_idea}\nFocus all analysis, synthesis, and simulation around structurally building and stress-testing this specific idea." if user_idea else ""
+    learning_context = _learning_context_block(learning_digest)
 
     full_context = "\n\n---\n\n".join(
         [
@@ -472,7 +759,7 @@ async def _run_pipeline_with_agentica(
         f"Technical primitives:\n\n{primitives_summary}\n\n"
         f"Consolidated context:\n{compact_context}\n\n"
         "Search the web to find real, current market pain mapping to these primitives. "
-        f"Go FAR beyond the papers' own domain.{anchor_text}",
+        f"Go FAR beyond the papers' own domain.{anchor_text}{learning_context}",
         phase="pain scanner",
     )
     infra_task = call_agent_text(
@@ -480,7 +767,7 @@ async def _run_pipeline_with_agentica(
         f"Consolidated context:\n{compact_context}\n\n"
         f"Technical primitives:\n{primitives_summary}\n\n"
         "What NEW problems does widespread adoption of these techniques CREATE? "
-        f"What products solve those second-order problems?{anchor_text}",
+        f"What products solve those second-order problems?{anchor_text}{learning_context}",
         phase="infrastructure inversion",
     )
     temporal_task = call_agent_text(
@@ -489,7 +776,7 @@ async def _run_pipeline_with_agentica(
         f"Technical primitives:\n{primitives_summary}\n\n"
         "Identify temporal arbitrage windows. What can be built RIGHT NOW that "
         "won't be obvious for 12-24 months? Search the web for recent related "
-        f"papers and industry trends.{anchor_text}",
+        f"papers and industry trends.{anchor_text}{learning_context}",
         phase="temporal arbitrage",
     )
 
@@ -521,7 +808,7 @@ async def _run_pipeline_with_agentica(
         f"Technical primitives (Elements):\n{primitives_summary}\n\n"
         f"Market pain points found:\n{_truncate_text(pain_raw, PAIN_SUMMARY_CHARS)}\n\n"
         "Synthesize multiple primitives into 'Compound Opportunities'. "
-        f"Think about architectural hints for how these elements bond.{anchor_text}",
+        f"Think about architectural hints for how these elements bond.{anchor_text}{learning_context}",
         phase="compound synthesis",
     )
     _phase_finished("Phase 3", phase_started_at)
@@ -545,7 +832,7 @@ async def _run_pipeline_with_agentica(
         f"Consolidated context:\n{compact_context}\n\n"
         f"Technical primitives:\n{primitives_summary}\n\n"
         f"Candidate compound opportunities:\n{crosspoll_raw}\n\n"
-        f"Simulate failure modes. Be brutal on mechanical logic, fair on potential.{anchor_text}",
+        f"Simulate failure modes. Be brutal on mechanical logic, fair on potential.{anchor_text}{learning_context}",
         phase="structural simulation",
     )
     _phase_finished("Phase 4", phase_started_at)
@@ -558,10 +845,24 @@ async def _run_pipeline_with_agentica(
         f"Market analysis:\n{_truncate_text(pain_raw, PAIN_SUMMARY_CHARS)}\n\n"
         f"Compound opportunities & hints:\n{_truncate_text(crosspoll_raw, IDEA_SUMMARY_CHARS)}\n\n"
         f"Simulation failure modes:\n{_truncate_text(redteam_raw, IDEA_SUMMARY_CHARS)}\n\n"
-        f"Synthesize these into a final ranked set of actionable Product Compounds.{anchor_text}",
+        f"Synthesize these into a final ranked set of actionable Product Compounds.{anchor_text}{learning_context}",
         phase="final synthesis",
     )
     _phase_finished("Phase 5", phase_started_at)
+
+    final_raw, quality_review_md, _ = await _quality_review_and_repair(
+        use_agentica=True,
+        backend=None,
+        model=model,
+        final_raw=final_raw,
+        learning_digest=learning_digest,
+        primitives_summary=primitives_summary,
+        pain_raw=pain_raw,
+        crosspoll_raw=crosspoll_raw,
+        infra_raw=infra_raw,
+        temporal_raw=temporal_raw,
+        redteam_raw=redteam_raw,
+    )
 
     # Use the primary paper for reporting metadata
     primary_paper = papers[0]
@@ -579,9 +880,10 @@ async def _run_pipeline_with_agentica(
         if _redteam_search_enabled()
         else "",
         final=final_raw,
+        quality_review=quality_review_md,
     )
 
-    safe_id = primary_paper.arxiv_id.replace("/", "_").replace(".", "_")
+    safe_id = primary_paper.paper_id.replace("/", "_").replace(".", "_")
     if len(papers) > 1:
         safe_id += f"_plus_{len(papers)-1}_others"
     output_path = Path(f"products_{safe_id}.md")
@@ -593,21 +895,23 @@ async def _run_pipeline_with_agentica(
 
 
 async def _run_pipeline_with_openai_compatible(
-    arxiv_ids: list[str],
+    paper_refs: list[str],
     model: str,
     backend: OpenAICompatibleBackend,
     user_idea: str = "",
     github_mapping: dict[str, str] | None = None,
 ) -> str:
     github_mapping = github_mapping or {}
-    console.print(f"📄 Fetching {len(arxiv_ids)} paper(s): {', '.join(arxiv_ids)}")
-    papers = await asyncio.gather(*(fetch_paper(aid, github_mapping.get(aid, "")) for aid in arxiv_ids))
+    console.print(f"📄 Fetching {len(paper_refs)} paper(s): {', '.join(paper_refs)}")
+    papers = await asyncio.gather(*(fetch_paper(aid, github_mapping.get(ref, "")) for ref in paper_refs))
     titles = [p.title for p in papers]
     console.print(f"✅ Loaded: {titles}")
     console.print("⚙️ Execution backend: openai_compatible")
     console.print(f"⚙️ Speed profile: {_get_speed_profile()}")
+    learning_digest = _load_learning_digest()
 
     anchor_text = f"\n\nUSER'S CORE IDEA TO VALIDATE/AUGMENT:\n{user_idea}\nFocus all analysis, synthesis, and simulation around structurally building and stress-testing this specific idea." if user_idea else ""
+    learning_context = _learning_context_block(learning_digest)
 
     full_context = "\n\n---\n\n".join(
         [
@@ -687,7 +991,7 @@ async def _run_pipeline_with_openai_compatible(
                 f"Technical primitives:\n{primitives_summary}\n\n"
                 f"Consolidated context:\n{compact_context}\n\n"
                 f"External market evidence:\n{pain_search_packet}\n\n"
-                f"Find the strongest current market pain points linked to these primitives.{anchor_text}"
+                f"Find the strongest current market pain points linked to these primitives.{anchor_text}{learning_context}"
             ),
             phase="pain scanner",
             model=model,
@@ -701,7 +1005,7 @@ async def _run_pipeline_with_openai_compatible(
             user_prompt=(
                 f"Consolidated context:\n{compact_context}\n\n"
                 f"Technical primitives:\n{primitives_summary}\n\n"
-                f"What new problems does widespread adoption of these techniques create?{anchor_text}"
+                f"What new problems does widespread adoption of these techniques create?{anchor_text}{learning_context}"
             ),
             phase="infrastructure inversion",
             model=model,
@@ -725,7 +1029,7 @@ async def _run_pipeline_with_openai_compatible(
                 f"Consolidated context:\n{compact_context}\n\n"
                 f"Technical primitives:\n{primitives_summary}\n\n"
                 f"External evidence:\n{temporal_search_packet}\n\n"
-                f"Identify temporal arbitrage windows for the consolidated primitives.{anchor_text}"
+                f"Identify temporal arbitrage windows for the consolidated primitives.{anchor_text}{learning_context}"
             ),
             phase="temporal arbitrage",
             model=model,
@@ -758,7 +1062,7 @@ async def _run_pipeline_with_openai_compatible(
             f"Technical primitives (Elements):\n{primitives_summary}\n\n"
             f"Market pain points found:\n{_truncate_text(pain_raw, PAIN_SUMMARY_CHARS)}\n\n"
             "Synthesize multiple primitives into 'Compound Opportunities'. "
-            f"Think about architectural hints for how these elements bond.{anchor_text}"
+            f"Think about architectural hints for how these elements bond.{anchor_text}{learning_context}"
         ),
         phase="compound synthesis",
         model=model,
@@ -779,6 +1083,7 @@ async def _run_pipeline_with_openai_compatible(
         user_prompt=(
             "Here are product compounds from research. Simulate failure modes.\n\n"
             f"Papers: {', '.join(titles)}\n\n{all_ideas}\n{anchor_text}"
+            f"{learning_context}"
         ),
         phase="structural simulation",
         model=model,
@@ -797,13 +1102,27 @@ async def _run_pipeline_with_openai_compatible(
             f"Market analysis:\n{_truncate_text(pain_raw, PAIN_SUMMARY_CHARS)}\n\n"
             f"Compound opportunities & hints:\n{_truncate_text(crosspoll_raw, IDEA_SUMMARY_CHARS)}\n\n"
             f"Simulation failure modes:\n{_truncate_text(redteam_raw, IDEA_SUMMARY_CHARS)}\n\n"
-            f"Synthesize these into a final ranked set of actionable Product Compounds.{anchor_text}"
+            f"Synthesize these into a final ranked set of actionable Product Compounds.{anchor_text}{learning_context}"
         ),
         phase="final synthesis",
         model=model,
         max_tokens=_phase_max_tokens("final synthesis"),
     )
     _phase_finished("Phase 5", phase_started_at)
+
+    final_raw, quality_review_md, _ = await _quality_review_and_repair(
+        use_agentica=False,
+        backend=backend,
+        model=model,
+        final_raw=final_raw,
+        learning_digest=learning_digest,
+        primitives_summary=primitives_summary,
+        pain_raw=pain_raw,
+        crosspoll_raw=crosspoll_raw,
+        infra_raw=infra_raw,
+        temporal_raw=temporal_raw,
+        redteam_raw=redteam_raw,
+    )
 
     report = build_report(
         paper=primary_paper,
@@ -817,9 +1136,224 @@ async def _run_pipeline_with_openai_compatible(
         redteam=redteam_raw,
         redteam_sources="",
         final=final_raw,
+        quality_review=quality_review_md,
     )
 
-    safe_id = primary_paper.arxiv_id.replace("/", "_").replace(".", "_")
+    safe_id = primary_paper.paper_id.replace("/", "_").replace(".", "_")
+    if len(papers) > 1:
+        safe_id += f"_plus_{len(papers)-1}_others"
+    output_path = Path(f"products_{safe_id}.md")
+    output_path.write_text(report, encoding="utf-8")
+
+    console.print(f"\n✅ Done! Report saved to: {output_path}")
+    console.print(f"   {len(report)} chars, ~{len(report.splitlines())} lines")
+    return str(output_path)
+
+
+async def _run_pipeline_with_apodex(
+    paper_refs: list[str],
+    model: str,
+    backend: ApodexBackend,
+    user_idea: str = "",
+    github_mapping: dict[str, str] | None = None,
+) -> str:
+    """Run the pipeline using the Apodex deep research backend.
+
+    Apodex has built-in web search during reasoning, so we skip the
+    Serper/Exa search layer entirely. Each phase maps to the appropriate
+    Apodex model tier automatically via get_apodex_phase_model().
+    """
+    github_mapping = github_mapping or {}
+    console.print(f"📄 Fetching {len(paper_refs)} paper(s): {', '.join(paper_refs)}")
+    papers = await asyncio.gather(
+        *(fetch_paper(ref, github_mapping.get(ref, "")) for ref in paper_refs)
+    )
+    titles = [p.title for p in papers]
+    console.print(f"✅ Loaded: {titles}")
+    console.print("⚙️ Execution backend: apodex (deep research)")
+    console.print(f"⚙️ Speed profile: {_get_speed_profile()}")
+    learning_digest = _load_learning_digest()
+
+    anchor_text = (
+        f"\n\nUSER'S CORE IDEA TO VALIDATE/AUGMENT:\n{user_idea}\n"
+        "Focus all analysis, synthesis, and simulation around structurally "
+        "building and stress-testing this specific idea."
+        if user_idea
+        else ""
+    )
+    learning_context = _learning_context_block(learning_digest)
+
+    full_context = "\n\n---\n\n".join(
+        [
+            f"PAPER {i+1}:\n{build_full_paper_context(p)}"
+            + (f"\nGITHUB REPOSITORY: {p.github_url}" if p.github_url else "")
+            for i, p in enumerate(papers)
+        ]
+    )
+    console.print(f"🧠 Phase 1 context: {len(full_context)} chars")
+
+    # Phase 1: Decompose primitives
+    phase_started_at = _phase_started("🔬 Phase 1: Extracting technical primitives...")
+    primitives_raw = await call_apodex_text(
+        backend,
+        system_prompt=DECOMPOSER_PREMISE,
+        user_prompt=(
+            "Analyze these research papers and extract all atomic technical primitives. "
+            "For papers with GitHub URLs, skim the repository to ensure practical orientation. "
+            f"Think about interaction hooks between elements of DIFFERENT papers.\n\n{full_context}"
+        ),
+        phase="technical primitive extraction",
+    )
+    _phase_finished("Phase 1", phase_started_at)
+    primitives_summary = _truncate_text(primitives_raw, PRIMITIVE_SUMMARY_CHARS)
+
+    compact_context = "\n\n---\n\n".join(
+        [f"PAPER {i+1} SUMMARY:\n{p.title}\n{p.abstract}" for i, p in enumerate(papers)]
+    )
+    if primitives_summary:
+        compact_context += "\n\nTECHNICAL PRIMITIVES SUMMARY:\n" + primitives_summary
+
+    console.print(f"🧠 Downstream context: {len(compact_context)} chars")
+
+    # Phase 2: Parallel analysis (Apodex does its own web search per phase)
+    phase_started_at = _phase_started("🚀 Phase 2: Running parallel Apodex analysis...")
+
+    async def get_pain_raw():
+        return await call_apodex_text(
+            backend,
+            system_prompt=PAIN_SCANNER_PREMISE,
+            user_prompt=(
+                f"Technical primitives:\n{primitives_summary}\n\n"
+                f"Consolidated context:\n{compact_context}\n\n"
+                f"Search the web to find real, current market pain mapping to these primitives. "
+                f"Go FAR beyond the papers' own domain.{anchor_text}{learning_context}"
+            ),
+            phase="pain scanner",
+        )
+
+    async def get_infra_raw():
+        return await call_apodex_text(
+            backend,
+            system_prompt=INFRA_INVERSION_PREMISE,
+            user_prompt=(
+                f"Consolidated context:\n{compact_context}\n\n"
+                f"Technical primitives:\n{primitives_summary}\n\n"
+                f"What NEW problems does widespread adoption of these techniques CREATE? "
+                f"What products solve those second-order problems?{anchor_text}{learning_context}"
+            ),
+            phase="infrastructure inversion",
+        )
+
+    async def get_temporal_raw():
+        return await call_apodex_text(
+            backend,
+            system_prompt=TEMPORAL_PREMISE,
+            user_prompt=(
+                f"Consolidated context:\n{compact_context}\n\n"
+                f"Technical primitives:\n{primitives_summary}\n\n"
+                "Identify temporal arbitrage windows. What can be built RIGHT NOW that "
+                "won't be obvious for 12-24 months? Search the web for recent related "
+                f"papers and industry trends.{anchor_text}{learning_context}"
+            ),
+            phase="temporal arbitrage",
+        )
+
+    phase_two_results = await gather_agent_calls(
+        {
+            "pain scanner": get_pain_raw(),
+            "infrastructure inversion": get_infra_raw(),
+            "temporal arbitrage": get_temporal_raw(),
+        }
+    )
+    pain_raw = phase_two_results["pain scanner"]
+    infra_raw = phase_two_results["infrastructure inversion"]
+    temporal_raw = phase_two_results["temporal arbitrage"]
+    _phase_finished("Phase 2", phase_started_at, details="(apodex built-in web search)")
+
+    # Phase 3: Compound Synthesis
+    phase_started_at = _phase_started("🧬 Phase 3: Compound Synthesis...")
+    crosspoll_raw = await call_apodex_text(
+        backend,
+        system_prompt=CROSSPOLLINATOR_PREMISE,
+        user_prompt=(
+            f"Technical primitives (Elements):\n{primitives_summary}\n\n"
+            f"Market pain points found:\n{_truncate_text(pain_raw, PAIN_SUMMARY_CHARS)}\n\n"
+            "Synthesize multiple primitives into 'Compound Opportunities'. "
+            f"Think about architectural hints for how these elements bond.{anchor_text}{learning_context}"
+        ),
+        phase="compound synthesis",
+    )
+    _phase_finished("Phase 3", phase_started_at)
+
+    # Phase 4: Red Team
+    phase_started_at = _phase_started("🛡️  Phase 4: Structural Simulation (Red Team)...")
+    all_ideas = (
+        f"=== COMPOUNDS FROM PAIN MAPPING ===\n{_truncate_text(pain_raw, IDEA_SUMMARY_CHARS)}\n\n"
+        f"=== COMPOUNDS FROM SYNTHESIS ===\n{_truncate_text(crosspoll_raw, IDEA_SUMMARY_CHARS)}\n\n"
+        f"=== COMPOUNDS FROM INFRASTRUCTURE INVERSION ===\n{_truncate_text(infra_raw, IDEA_SUMMARY_CHARS)}\n\n"
+        f"=== COMPOUNDS FROM TEMPORAL ARBITRAGE ===\n{_truncate_text(temporal_raw, IDEA_SUMMARY_CHARS)}\n\n"
+    )
+    redteam_raw = await call_apodex_text(
+        backend,
+        system_prompt=DESTROYER_PREMISE,
+        user_prompt=(
+            "Here are product compounds from research. Simulate failure modes. "
+            f"Papers: {', '.join(titles)}\n\n{all_ideas}\n{anchor_text}"
+            f"{learning_context}"
+        ),
+        phase="structural simulation",
+    )
+    _phase_finished("Phase 4", phase_started_at, details="(apodex deep reasoning)")
+
+    # Phase 5: Final Synthesis (uses highest-rigor discovery model)
+    phase_started_at = _phase_started("🎯 Phase 5: Final synthesis (deep discovery)...")
+    final_raw = await call_apodex_text(
+        backend,
+        system_prompt=SYNTHESIZER_PREMISE,
+        user_prompt=(
+            f"Consolidated primitives:\n{primitives_summary}\n\n"
+            f"Market analysis:\n{_truncate_text(pain_raw, PAIN_SUMMARY_CHARS)}\n\n"
+            f"Compound opportunities & hints:\n{_truncate_text(crosspoll_raw, IDEA_SUMMARY_CHARS)}\n\n"
+            f"Simulation failure modes:\n{_truncate_text(redteam_raw, IDEA_SUMMARY_CHARS)}\n\n"
+            f"Synthesize these into a final ranked set of actionable Product Compounds.{anchor_text}{learning_context}"
+        ),
+        phase="final synthesis",
+    )
+    _phase_finished("Phase 5", phase_started_at)
+
+    # Quality review + repair
+    final_raw, quality_review_md, _ = await _quality_review_and_repair(
+        use_agentica=False,
+        backend=None,
+        apodex_backend=backend,
+        model=model,
+        final_raw=final_raw,
+        learning_digest=learning_digest,
+        primitives_summary=primitives_summary,
+        pain_raw=pain_raw,
+        crosspoll_raw=crosspoll_raw,
+        infra_raw=infra_raw,
+        temporal_raw=temporal_raw,
+        redteam_raw=redteam_raw,
+    )
+
+    primary_paper = papers[0]
+    report = build_report(
+        paper=primary_paper,
+        primitives=primitives_raw,
+        pain=pain_raw,
+        pain_sources="",
+        crosspoll=crosspoll_raw,
+        infra=infra_raw,
+        temporal=temporal_raw,
+        temporal_sources="",
+        redteam=redteam_raw,
+        redteam_sources="",
+        final=final_raw,
+        quality_review=quality_review_md,
+    )
+
+    safe_id = primary_paper.paper_id.replace("/", "_").replace(".", "_")
     if len(papers) > 1:
         safe_id += f"_plus_{len(papers)-1}_others"
     output_path = Path(f"products_{safe_id}.md")
@@ -841,7 +1375,7 @@ async def run_pipeline(
     user_idea: str = "",
 ) -> str:
     """Run the paper-to-product pipeline using the configured execution backend."""
-    arxiv_ids: list[str] = []
+    paper_refs: list[str] = []
     github_mapping: dict[str, str] = {}
 
     # Phase 0 (optional): PASA-style paper search for topic queries
@@ -860,17 +1394,22 @@ async def run_pipeline(
                 msg += f" [GitHub: {p.github_url}]"
                 github_mapping[p.arxiv_id] = p.github_url
             console.print(msg)
-            arxiv_ids.append(p.arxiv_id)
+            paper_refs.append(p.arxiv_id)
     else:
         if isinstance(arxiv_id_or_url, str):
-            arxiv_ids = [arxiv_id_or_url]
+            paper_refs = [arxiv_id_or_url]
         else:
-            arxiv_ids = arxiv_id_or_url
+            paper_refs = arxiv_id_or_url
 
     backend_name = get_execution_backend_name()
+    if backend_name == APODEX_BACKEND:
+        backend = build_apodex_backend()
+        return await _run_pipeline_with_apodex(
+            paper_refs, model, backend, user_idea, github_mapping
+        )
     if backend_name == OPENAI_COMPATIBLE_BACKEND:
         backend = build_openai_compatible_backend()
         return await _run_pipeline_with_openai_compatible(
-            arxiv_ids, model, backend, user_idea, github_mapping
+            paper_refs, model, backend, user_idea, github_mapping
         )
-    return await _run_pipeline_with_agentica(arxiv_ids, model, user_idea, github_mapping)
+    return await _run_pipeline_with_agentica(paper_refs, model, user_idea, github_mapping)

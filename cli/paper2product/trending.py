@@ -8,7 +8,7 @@ from typing import List, Optional
 import httpx
 
 from .models import PaperContent
-from .ingestion import fetch_paper
+from .sources import fetch_paper
 
 
 HF_PAPERS_API_BASE = "https://huggingface.co/api/papers"

@@ -116,7 +116,7 @@ async def score_feedback(
                 f"Usefulness rating: {usefulness_rating}/5\n"
                 f"Feedback:\n{detailed_feedback}\n"
             ),
-            model=model or os.getenv("ARXIV2PRODUCT_MODEL", "openai/gpt-4.1-mini"),
+            model=model or os.getenv("PAPER2PRODUCT_MODEL", "openai/gpt-4.1-mini"),
             phase="feedback scoring",
             max_tokens=240,
         )

@@ -1,11 +1,13 @@
+"""PDF parsing and reference extraction utilities.
+
+Paper fetching has been moved to sources.py which dispatches across
+arXiv, DOI, bioRxiv, direct PDF, and HuggingFace sources. This module
+retains the shared PDF-parsing primitives that sources.py depends on.
+"""
+
 import re
-import tempfile
 
-import arxiv
 import pdfplumber
-
-from .models import PaperContent
-
 
 SECTION_HEADER_PATTERN = re.compile(r"^\d+\.?\s+[A-Z]")
 NAMED_SECTION_PATTERN = re.compile(
@@ -17,50 +19,10 @@ NAMED_SECTION_PATTERN = re.compile(
 FIGURE_PATTERN = re.compile(r"^(Figure|Fig\.?)\s+\d+", re.I)
 TABLE_PATTERN = re.compile(r"^Table\s+\d+", re.I)
 REFERENCE_TITLE_PATTERN = re.compile(r'"(.+?)"')
-ARXIV_PREFIX_PATTERN = re.compile(
-    r"^https?://(www\.)?(arxiv\.org/abs/|alphaxiv\.org/abs/)"
-)
-
-
-def normalize_arxiv_id(arxiv_id_or_url: str) -> str:
-    return (
-        ARXIV_PREFIX_PATTERN.sub("", arxiv_id_or_url).strip("/").split("v")[0]
-    )
-
-
-async def fetch_paper(arxiv_id_or_url: str, github_url: str = "") -> PaperContent:
-    """Fetch paper metadata via arxiv API and parse the full PDF."""
-    arxiv_id = normalize_arxiv_id(arxiv_id_or_url)
-    client = arxiv.Client()
-    search = arxiv.Search(id_list=[arxiv_id])
-    result = next(client.results(search))
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pdf_path = result.download_pdf(dirpath=tmpdir)
-        full_text, sections, fig_captions, tables = parse_pdf(pdf_path)
-
-    ref_section = sections.get("references", sections.get("bibliography", ""))
-
-    if not github_url:
-        github_match = re.search(r"https?://github\.com/[a-zA-Z0-9\-_./]+", result.summary)
-        if github_match:
-            github_url = github_match.group(0)
-
-    return PaperContent(
-        arxiv_id=arxiv_id,
-        title=result.title,
-        authors=[author.name for author in result.authors],
-        abstract=result.summary,
-        full_text=full_text,
-        sections=sections,
-        figures_captions=fig_captions,
-        tables_text=tables,
-        references_titles=extract_reference_titles(ref_section),
-        github_url=github_url,
-    )
 
 
 def parse_pdf(path: str) -> tuple[str, dict[str, str], list[str], list[str]]:
+    """Parse a PDF file into (full_text, sections, figure_captions, tables)."""
     full_text_parts: list[str] = []
     current_section = "preamble"
     sections: dict[str, list[str]] = {current_section: []}
@@ -97,6 +59,7 @@ def parse_pdf(path: str) -> tuple[str, dict[str, str], list[str], list[str]]:
 
 
 def extract_reference_titles(reference_text: str) -> list[str]:
+    """Extract quoted titles from a references section."""
     titles: list[str] = []
     for line in reference_text.splitlines():
         match = REFERENCE_TITLE_PATTERN.search(line)

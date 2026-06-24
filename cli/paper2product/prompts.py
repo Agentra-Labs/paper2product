@@ -24,6 +24,11 @@ DECOMPOSER_PREMISE = dedent("""\
     Focus on what is actually BUILT and functional — the code is the ground truth.
     Distinguish between theoretical claims and implementation-level primitives.
 
+    WEB SEARCH INTEGRATION:
+    You have built-in web search capability. Use it to look up the paper's
+    context, find related implementations, and verify technical claims. Search
+    for the paper title, key techniques, and any GitHub repositories mentioned.
+
     For EACH primitive, output in markdown:
     ### <primitive_name>
     - **What it does**: the transformation in plain engineering terms (input → output)
@@ -44,6 +49,12 @@ PAIN_SCANNER_PREMISE = dedent("""\
     Think beyond software — include hardware, biology, energy, defense, finance,
     manufacturing, scientific infrastructure, national-scale problems. The best
     opportunities are often where pain is largest and software alone cannot solve it.
+
+    WEB SEARCH INTEGRATION:
+    You have built-in web search. Use it aggressively to find REAL, CURRENT market
+    pain points. Search for industry reports, company spending, buyer complaints,
+    and market data. Do NOT rely on your training data alone — verify everything
+    with live web searches. Search for specific companies, budgets, and buyers.
 
     Find the 4 strongest pain points only. Be concise and concrete.
 
@@ -116,6 +127,12 @@ TEMPORAL_PREMISE = dedent("""\
     Think ambitiously. The best temporal arbitrage plays become defining companies,
     not features. Consider: new instruments, new manufacturing processes, new drugs,
     new materials, new financial products, new defense capabilities — not just software.
+
+    WEB SEARCH INTEGRATION:
+    You have built-in web search. Use it to find recent related papers, industry
+    trends, and adoption signals. Search for the paper title + recent year, look
+    for startup announcements, funding rounds, and product launches in this space.
+    Do NOT rely on training data alone — search the web for current signals.
 
     Identify:
     1. Existing industries where incumbents are stuck with older techniques
@@ -274,6 +291,12 @@ PAPER_CRAWLER_PREMISE = dedent("""\
     You MUST prioritize finding papers that have public implementation code (GitHub).
     When searching, look for links to repositories in abstracts or use queries like
     "topic github" or "topic code implementation".
+
+    WEB SEARCH INTEGRATION:
+    You have built-in web search. Use it to find papers beyond your training data.
+    Search for recent papers, workshop proceedings, and conference submissions.
+    Search for "topic github" to find papers with code. Verify every candidate
+    has a real GitHub link before including it.
 
     Strategy:
     1. Generate 3-4 diverse search queries from the topic (varying specificity and angle)

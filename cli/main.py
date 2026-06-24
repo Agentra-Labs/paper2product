@@ -1,5 +1,5 @@
-"""Compatibility wrapper for the arxiv2product CLI."""
-from arxiv2product.cli import main
+"""Compatibility wrapper for the paper2product CLI."""
+from paper2product.cli import main
 
 
 if __name__ == "__main__":

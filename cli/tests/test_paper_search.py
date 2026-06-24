@@ -3,7 +3,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from arxiv2product.paper_search import (
+from paper2product.paper_search import (
     PaperSearchResult,
     _parse_selector_output,
     is_topic_query,

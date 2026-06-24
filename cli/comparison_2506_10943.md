@@ -14,7 +14,7 @@ I compared the report generated on the `main` branch vs the `dev` branch for pap
 
 ## 🛠️ Root Cause Analysis: Prompt Differences
 
-The change in output quality and style is directly linked to the persona shifts in `cli/arxiv2product/prompts.py`:
+The change in output quality and style is directly linked to the persona shifts in `cli/paper2product/prompts.py`:
 
 1.  **Persona Shift**:
     - `main`: "Ruthless market analyst"
