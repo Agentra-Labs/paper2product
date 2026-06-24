@@ -1393,7 +1393,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arxiv" },
+    { name = "arxiv", specifier = ">=4.0.0" },
     { name = "cli2" },
     { name = "fastapi" },
     { name = "httpx" },

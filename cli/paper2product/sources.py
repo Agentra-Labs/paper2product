@@ -6,8 +6,10 @@ returns a unified PaperContent object.
 
 from __future__ import annotations
 
+import os
 import re
 import tempfile
+import urllib.request
 from dataclasses import dataclass
 from typing import Literal
 
@@ -103,7 +105,10 @@ async def fetch_from_arxiv(
             result = next(client.results(search))
 
             with tempfile.TemporaryDirectory() as tmpdir:
-                pdf_path = result.download_pdf(dirpath=tmpdir)
+                if not result.pdf_url:
+                    raise ValueError(f"No PDF URL for arXiv paper: {arxiv_id}")
+                pdf_path = os.path.join(tmpdir, f"{arxiv_id}.pdf")
+                urllib.request.urlretrieve(result.pdf_url, pdf_path)
                 full_text, sections, fig_captions, tables = parse_pdf(pdf_path)
 
             ref_section = sections.get("references", sections.get("bibliography", ""))
@@ -247,7 +252,6 @@ async def fetch_from_doi(
                                 tmp.write(pdf_response.content)
                                 tmp_path = tmp.name
                             pdf_text, sections, fig_captions, tables = parse_pdf(tmp_path)
-                            import os
                             os.unlink(tmp_path)
                     except Exception:
                         pass  # PDF extraction failed, fall back to metadata only
@@ -355,7 +359,6 @@ async def fetch_from_pdf(
     try:
         full_text, sections, fig_captions, tables = parse_pdf(tmp_path)
     finally:
-        import os
         os.unlink(tmp_path)
 
     # Try to extract title from first non-empty line

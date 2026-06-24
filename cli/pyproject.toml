@@ -18,7 +18,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "arxiv",
+    "arxiv>=4.0.0",
     "fastapi",
     "httpx",
     "pdfplumber",
